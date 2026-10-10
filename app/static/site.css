@@ -48,4 +48,39 @@ textarea { resize: vertical; line-height: 1.5; }
 .inline-form select { width: auto; }
 .empty { text-align: center; padding: 42px 20px; }
 code { background: #edf0ed; padding: 2px 5px; border-radius: 4px; }
-@media (max-width: 640px) { main { margin-top: 24px; } .heading-row, .option { align-items: flex-start; flex-direction: column; } .heading-row { gap: 12px; } .option .actions { width: 100%; } .topbar { padding: 0 20px; } }
+.availability-editor { max-width: 760px; margin: 20px auto; }
+.timezone-field { max-width: 360px; }
+.availability-editor #availability-form { gap: 12px; margin: 16px 0; }
+.availability-list { padding: 20px; background: white; border: 1px solid #e2e7e1; border-radius: 12px; }
+.availability-list { container-type: inline-size; }
+.availability-list-heading h2 { margin: 0 0 4px; }
+.availability-list-heading p { margin: 4px 0 16px; }
+.window-rows { display: grid; }
+.window-rows:empty::before { content: "No weekly times added yet."; display: block; padding: 10px 0 16px; color: #6d7771; font-size: .92rem; }
+.window-row { display: grid; grid-template-columns: minmax(190px, 1.15fr) minmax(190px, 1fr) minmax(205px, 1fr) auto; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid #edf0ed; }
+.window-field { display: flex; align-items: center; justify-content: space-between; gap: 7px; min-width: 0; white-space: nowrap; font-size: .82rem; font-weight: 650; }
+.window-field select { width: auto; min-width: 0; padding: 8px 9px; }
+.day-select { flex: 0 1 130px; }
+.start-select { flex: 0 1 116px; }
+.end-select { flex: 0 1 160px; }
+.remove-window { padding: 9px 11px; background: #e8eee9; color: #345847; font-size: .84rem; }
+.remove-window:hover { background: #dbe7df; }
+.add-window { margin-top: 12px; }
+.availability-ready .schedule-fallback { display: none; }
+.activity-picker { min-width: 0; margin: 0; padding: 16px 20px; border: 1px solid #e2e7e1; border-radius: 12px; background: white; }
+.activity-picker legend { padding: 0 5px; font-weight: 650; }
+.activity-picker p { margin: 0 0 12px; }
+.activity-picker #activity-count { margin: 12px 0 0; }
+.activity-choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.activity-choice { position: relative; cursor: pointer; }
+.activity-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; padding: 0; }
+.activity-choice span { display: block; padding: 10px 16px; border: 1px solid #cbd5ce; border-radius: 24px; background: #f4f5f0; }
+.activity-choice input:checked + span { background: #276a52; border-color: #276a52; color: white; }
+.activity-choice input:focus-visible + span { outline: 3px solid #8eaa99; outline-offset: 3px; }
+.activity-choice input:disabled + span { opacity: .5; cursor: not-allowed; }
+@container (max-width: 650px) {
+  .window-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .window-field select { width: min(70%, 280px); flex: none; }
+  .remove-window { justify-self: end; }
+}
+@media (max-width: 640px) { main { margin-top: 24px; } .heading-row, .option { align-items: flex-start; flex-direction: column; } .heading-row { gap: 12px; } .option .actions { width: 100%; } .topbar { padding: 0 20px; } .availability-list { padding: 16px; } }

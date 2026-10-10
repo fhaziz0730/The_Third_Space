@@ -24,7 +24,7 @@ ACTIVITIES = {
 def _utc_window_for_date(member: Membership, window: AvailabilityWindow, local_date: date):
     zone = ZoneInfo(member.timezone_name)
     start = datetime.combine(local_date, window.starts_at, zone).astimezone(timezone.utc)
-    end_date = local_date + timedelta(days=1) if window.ends_at <= window.starts_at else local_date
+    end_date = local_date + timedelta(days=1) if window.ends_at < window.starts_at else local_date
     end = datetime.combine(end_date, window.ends_at, zone).astimezone(timezone.utc)
     return start, end
 

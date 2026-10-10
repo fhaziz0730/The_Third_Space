@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import AvailabilityWindow, Group, Membership, Poll, PollOption, User
-from ..scheduling import generate_candidates
+from ..scheduling import ACTIVITIES, generate_candidates
 from ..web import can_manage, current_user, membership_for, page
 
 router = APIRouter()
@@ -42,18 +42,21 @@ def join_page(request: Request, token: str, db: Session = Depends(get_db)):
         raise HTTPException(404)
     user = current_user(request, db)
     members = len(group.memberships)
+    if not user:
+        request.session["pending_invitation"] = f"/join/{group.join_token}"
     full = group.member_limit is not None and members >= group.member_limit
     return page(request, "join.html", user=user, group=group, full=full, is_member=bool(user and membership_for(db, user, group.id)))
 
 
 @router.post("/join/{token}")
 def join_group(request: Request, token: str, db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
     group = db.query(Group).filter_by(join_token=token).first()
     if not group:
         raise HTTPException(404)
+    user = current_user(request, db)
+    if not user:
+        request.session["pending_invitation"] = f"/join/{group.join_token}"
+        return RedirectResponse("/login", status_code=303)
     if membership_for(db, user, group.id):
         return RedirectResponse(f"/groups/{group.id}", status_code=303)
     if group.member_limit is not None and len(group.memberships) >= group.member_limit:
@@ -109,16 +112,31 @@ def availability_page(request: Request, group_id: int, db: Session = Depends(get
     member = membership_for(db, user, group_id) if user else None
     if not member:
         raise HTTPException(404)
-    return page(request, "availability.html", user=user, member=member, group=member.group, windows=member.windows)
+    return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows)
 
 
 @router.post("/groups/{group_id}/availability")
-def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: str = Form(""), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db)):
+def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db)):
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     user = current_user(request, db)
     member = membership_for(db, user, group_id) if user else None
     if not member:
         raise HTTPException(404)
+    form_values = {
+        "timezone_name": timezone_name,
+        "schedule": schedule,
+        "hobbies": ",".join(hobbies),
+        "broad_location": broad_location,
+        "exact_address": exact_address,
+        "latitude": latitude,
+        "longitude": longitude,
+        "hide_hobbies": bool(hide_hobbies),
+        "hide_availability": bool(hide_availability),
+        "hide_location": bool(hide_location),
+    }
+    selected_hobbies = list(dict.fromkeys(hobbies))
+    if len(selected_hobbies) > 4 or any(hobby not in ACTIVITIES for hobby in selected_hobbies):
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose up to four hobbies from the available activities.")
     try:
         ZoneInfo(timezone_name)
         parsed = []
@@ -128,16 +146,25 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
             day, start, end = [part.strip() for part in line.split(",")]
             day_num = int(day)
             start_time, end_time = datetime.strptime(start, "%H:%M").time(), datetime.strptime(end, "%H:%M").time()
-            if not 0 <= day_num <= 6 or start_time == end_time:
+            if not 0 <= day_num <= 6 or start_time >= end_time:
                 raise ValueError
             parsed.append((day_num, start_time, end_time))
     except (ValueError, ZoneInfoNotFoundError):
-        return page(request, "availability.html", user=user, member=member, group=member.group, windows=member.windows, error="Use a valid time zone and one 'weekday,start,end' window per line. Weekdays are Monday=0 through Sunday=6.")
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Use a valid time zone and one 'weekday,start,end' window per line, with the end later than the start on the same day. Weekdays are Monday=0 through Sunday=6.")
+    by_day = {}
+    for weekday, starts_at, ends_at in parsed:
+        if starts_at < ends_at:
+            by_day.setdefault(weekday, []).append((starts_at, ends_at))
+    for weekday, day_windows in by_day.items():
+        day_windows.sort()
+        if any(current_start < previous_end for (_, previous_end), (current_start, _) in zip(day_windows, day_windows[1:])):
+            day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][weekday]
+            return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error=f"Some availability windows overlap on {day_name}. Adjust the times before saving.")
     member.windows.clear()
     for weekday, starts_at, ends_at in parsed:
         member.windows.append(AvailabilityWindow(weekday=weekday, starts_at=starts_at, ends_at=ends_at))
     member.timezone_name = timezone_name
-    member.hobbies = hobbies[:1000]
+    member.hobbies = ",".join(selected_hobbies)
     member.broad_location = broad_location[:160]
     member.exact_address = exact_address[:400]
     try:
@@ -149,7 +176,7 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
             raise ValueError
     except ValueError:
         db.rollback()
-        return page(request, "availability.html", user=user, member=member, group=member.group, windows=member.windows, error="Enter both valid latitude and longitude values, or leave both blank.")
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, form_values=form_values, error="Enter both valid latitude and longitude values, or leave both blank.")
     member.hide_hobbies = bool(hide_hobbies)
     member.hide_availability = bool(hide_availability)
     member.hide_location = bool(hide_location)

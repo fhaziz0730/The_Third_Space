@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -8,6 +10,15 @@ from ..security import hash_password, password_matches
 from ..web import current_user, membership_for, page
 
 router = APIRouter()
+
+
+def complete_sign_in(request: Request, user: User):
+    destination = request.session.get("pending_invitation", "")
+    request.session.clear()
+    request.session["user_id"] = user.id
+    if not isinstance(destination, str) or not re.fullmatch(r"/join/[A-Za-z0-9_-]+", destination):
+        destination = "/"
+    return RedirectResponse(destination, status_code=303)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -34,8 +45,7 @@ def register(request: Request, email: str = Form(), display_name: str = Form(), 
     user = User(email=email, display_name=display_name.strip()[:80], password_hash=hash_password(password))
     db.add(user)
     db.commit()
-    request.session["user_id"] = user.id
-    return RedirectResponse("/", status_code=303)
+    return complete_sign_in(request, user)
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -48,9 +58,7 @@ def login(request: Request, email: str = Form(), password: str = Form(), db: Ses
     user = db.query(User).filter_by(email=email.strip().lower()).first()
     if not user or not password_matches(password, user.password_hash):
         return page(request, "login.html", error="Email or password was incorrect.")
-    request.session.clear()
-    request.session["user_id"] = user.id
-    return RedirectResponse("/", status_code=303)
+    return complete_sign_in(request, user)
 
 
 @router.post("/logout")
