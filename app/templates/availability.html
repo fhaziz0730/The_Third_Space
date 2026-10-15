@@ -7,7 +7,7 @@
   <h1>Your interests and schedule</h1>
   <p class="muted">Add the recurring times you are usually free each week. You can add several windows on the same day. Times use your selected time zone.</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" class="stack" id="availability-form">
+  <form method="post" class="stack" id="availability-form">{{ csrf_input(request) }}
     <label class="timezone-field">Time zone<input name="timezone_name" value="{{ form_values.timezone_name if form_values is defined else member.timezone_name }}" placeholder="America/New_York" required></label>
 
     <section class="availability-list" aria-labelledby="availability-heading">
@@ -46,7 +46,7 @@
       <noscript><p class="notice">Location search needs JavaScript. Enable it to choose a starting area, or leave location blank.</p></noscript>
     </section>
     <details><summary>Optional private address</summary><p class="muted">Not needed for venue suggestions. This address is encrypted and is not sent to location search services.</p><label>Exact starting address<input name="exact_address" value="{{ form_values.exact_address if form_values is defined else member.exact_address }}" autocomplete="street-address"></label></details>
-    <label>Preferred travel radius (km)<input name="travel_radius_km" type="number" min="1" max="200" step="any" required value="{{ form_values.travel_radius_km if form_values is defined else member.travel_radius_km }}"></label>
+    <label>Preferred travel radius (miles)<input name="travel_radius_miles" type="number" min="0.1" max="125" step="any" required value="{{ form_values.travel_radius_miles if form_values is defined else ((member.travel_radius_km / km_per_mile) | round(2)) }}"></label>
     <p class="muted">We prefer venues within everyone's radius, then the shortest longest journey. Alternatives outside a preferred radius are labeled. Distances are straight-line estimates, not travel times.</p>
     <label class="check"><input name="allow_places_discovery" type="checkbox" {% if (form_values.allow_places_discovery if form_values is defined else member.allow_places_discovery) %}checked{% endif %}> Allow my approximate location to help find venues through Google Places</label>
     <p class="muted">When Google discovery is enabled, rounded search areas based on opted-in members are sent to Google. Names, addresses, and individual profiles are not sent. Turning this off still allows private distance ranking against the venue catalog. Hiding your broad location below only affects what other members see.</p>

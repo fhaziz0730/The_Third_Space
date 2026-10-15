@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+.mock
+.dev-deps
+.uv-cache
+.venv
+backups
+*.dump
+**/__pycache__
+**/*.pyc
+.github

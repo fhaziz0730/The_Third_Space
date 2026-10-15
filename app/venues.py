@@ -2,6 +2,8 @@
 
 from math import asin, cos, isfinite, radians, sin, sqrt
 
+KM_PER_MILE = 1.609344
+
 
 def located_members(members):
     return [member for member in members

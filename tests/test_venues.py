@@ -158,16 +158,34 @@ class VenueIntegrationTests(unittest.TestCase):
         return groups.save_availability(self.request(), self.group.id, **fields)
 
     def test_radius_and_discovery_preferences_save_and_validation_preserves_data(self):
-        self.assertEqual(self.save(travel_radius_km="12.5", allow_places_discovery="on").status_code, 303)
+        self.assertEqual(self.save(travel_radius_miles="12.5", allow_places_discovery="on").status_code, 303)
         membership = next(m for m in self.group.memberships if m.user_id == self.user.id)
-        self.assertEqual(membership.travel_radius_km, 12.5)
+        self.assertEqual(membership.travel_radius_km, 12.5 * 1.609344)
         self.assertTrue(membership.allow_places_discovery)
         for radius in ("nan", "inf", "0", "201", "invalid"):
-            response = self.save(travel_radius_km=radius)
+            response = self.save(travel_radius_miles=radius)
             self.assertEqual(response.status_code, 200)
-            self.assertIn(b"between 1 and 200", response.body)
-            self.assertEqual(membership.travel_radius_km, 12.5)
+            self.assertIn(b"between 0.1 and 125", response.body)
+            self.assertEqual(membership.travel_radius_km, 12.5 * 1.609344)
             self.assertTrue(membership.allow_places_discovery)
+
+    def test_existing_radius_displays_in_miles_and_omitted_field_preserves_it(self):
+        membership = next(m for m in self.group.memberships if m.user_id == self.user.id)
+        membership.travel_radius_km = 16.09344
+        self.db.commit()
+        response = groups.availability_page(self.request(), self.group.id, self.db)
+        self.assertIn(b'Preferred travel radius (miles)', response.body)
+        self.assertIn(b'name="travel_radius_miles"', response.body)
+        self.assertIn(b'value="10.0"', response.body)
+        self.assertEqual(self.save().status_code, 303)
+        self.assertAlmostEqual(membership.travel_radius_km, 16.09344)
+
+    def test_poll_displays_distance_in_miles(self):
+        response = groups.create_suggestions(self.request(), self.group.id, self.db)
+        poll_id = int(response.headers["location"].split("/")[-1])
+        page = polls.poll_page(self.request(), self.group.id, poll_id, self.db)
+        self.assertIn(b"miles from your starting area", page.body)
+        self.assertNotIn(b"km from your starting area", page.body)
 
     def test_only_available_members_influence_venue_ranking_and_multiple_choices(self):
         unavailable = self.group.memberships[0]

@@ -2,3 +2,9 @@
 __pycache__/
 *.py[cod]
 .mock/
+.dev-deps/
+.uv-cache/
+.venv/
+.env.production
+backups/
+*.dump

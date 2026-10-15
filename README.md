@@ -21,6 +21,10 @@ A small server-rendered FastAPI application for forming activity groups, recurri
 
 ## Run locally
 
+For cloud setup, CI/CD, production secrets, backups, and the launch checklist, follow
+[DEPLOYMENT.md](DEPLOYMENT.md). The repository includes a Railway configuration,
+Docker image, GitHub Actions CI, and an optional encrypted backup workflow.
+
 1. Create and activate a Python virtual environment.
 2. Install dependencies with `pip install -r requirements.txt`.
 3. Copy `.env.example` to `.env` and load its values into your shell.
@@ -28,9 +32,10 @@ A small server-rendered FastAPI application for forming activity groups, recurri
 5. Run `uvicorn app.main:app --reload --env-file .env`.
 6. Open `http://127.0.0.1:8000`.
 
-Tables are created on app startup for the prototype. Existing SQLite and PostgreSQL
-databases receive the additive venue-preference columns automatically, preserving
-existing records. There is no general migration workflow yet.
+Local startup applies Alembic migrations automatically. Production uses a pre-deploy
+migration command and never changes the schema during web startup. Existing complete
+prototype databases can be adopted without deleting records; back up real data before
+their first migration. See [DEPLOYMENT.md](DEPLOYMENT.md) for the workflow.
 
 ## Run with mock data
 
@@ -65,7 +70,10 @@ In **Your group profile**, search for a town, city, or ZIP/postal code and choos
 matching area. Alternatively, choose **Use my current location**, which rounds browser
 coordinates to two decimal places before filling the hidden location fields. Browser
 location requires localhost or HTTPS and your permission. Save a preferred travel
-radius between 1 and 200 km (default: 25 km). Users never need to enter coordinates.
+radius between 0.1 and 125 miles (the existing 25 km default displays as about
+15.53 miles). Profile preferences and poll distances are shown in miles; the app
+converts to kilometers internally so existing database values keep their meaning.
+Users never need to enter coordinates.
 An exact address is not needed and is kept in a collapsed optional section.
 
 Town search uses Open-Meteo's geocoding service with GeoNames attribution and a
@@ -144,14 +152,17 @@ and [Google Places policies](https://developers.google.com/maps/documentation/pl
 when configuring a deployment. Opening hours, booking, accessibility, and suitability
 are not automatically verified. Distances are not driving or transit estimates.
 
-Run the test suite with `python -m unittest discover -s tests`. Provider tests use
-mocked responses and never require API credentials or network access.
+Install test dependencies with `pip install -r requirements-dev.txt`, then run
+`python -m unittest discover -s tests` and `node tests/location_picker.test.cjs`.
+Provider tests use mocked responses and never need live API credentials. CI also
+uses a disposable PostgreSQL database; optional backup integration tests need local
+PostgreSQL/GnuPG tools and an explicitly configured disposable database.
 
 ## Prototype notes
 
 - Candidate times use group member weekly windows and each member's IANA time zone. Times are presented in UTC in this first pass.
 - Candidate activities and default durations are in `app/scheduling.py`.
-- Place ranking uses haversine straight-line distance; mock mode includes fictional venues and member coordinates for exploring ranking. Members can enter coordinates manually outside mock mode. No geocoding integration is configured. Do not treat these distances as driving estimates.
+- Place ranking uses haversine straight-line distance; mock mode includes fictional venues and member coordinates for exploring ranking. Town/postal-code search and approximate browser location fill coordinates automatically. Do not treat these distances as driving estimates.
 - Exact address data is currently collected as an optional field, encrypted at rest with `ADDRESS_ENCRYPTION_KEY`, not sent anywhere, and not used for ranking. Keep this key stable and private; existing addresses cannot be decrypted if the key changes. Select a privacy-appropriate geocoding provider before connecting that field to geocoding. The public OpenStreetMap Nominatim service must not receive personal or confidential address data; see its [usage policy](https://operations.osmfoundation.org/policies/nominatim/).
 - Set strong, stable `SESSION_SECRET` and `ADDRESS_ENCRYPTION_KEY` values and enable `COOKIE_SECURE=true` when served over HTTPS. Generate the address key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- This is a development prototype, not production-hardened authentication. Add CSRF protection, migrations, rate limiting, and production session/security configuration before public deployment.
+- Forms and browser POST requests require session-bound CSRF tokens and pass origin checks. Authentication throttling is shared through the database. Production validates secrets, HTTPS origin, host allowlists, TLS database settings, and secure cookies. Follow the deployment checklist before inviting real users; password recovery and email verification are not yet implemented.

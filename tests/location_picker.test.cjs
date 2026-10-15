@@ -21,6 +21,7 @@ function setup(fetch) {
   };
   const picker = get("picker");
   picker.dataset.searchUrl = "/groups/1/location-search";
+  picker.content = "test-session-csrf-token";
   const navigator = { geolocation: {} };
   vm.runInNewContext(source, {
     document: { querySelector: () => picker, getElementById: get, createElement: () => new Element() },
@@ -30,11 +31,16 @@ function setup(fetch) {
 }
 
 (async () => {
-  const { get, navigator } = setup(async () => ({ ok: true, json: async () => ({
+  let requestHeaders;
+  const { get, navigator } = setup(async (_, options) => {
+    requestHeaders = options.headers;
+    return { ok: true, json: async () => ({
     sample: false, results: [{ label: "Boston, Massachusetts", latitude: 42.36, longitude: -71.06 }],
-  }) }));
+  }) };
+  });
   get("location-query").value = "Boston";
   await get("search-location").fire("click");
+  assert.equal(requestHeaders["X-CSRF-Token"], "test-session-csrf-token");
   assert.equal(get("location-results").children.length, 1);
   get("location-results").children[0].children[0].fire("click");
   assert.equal(get("location-label").value, "Boston, Massachusetts");

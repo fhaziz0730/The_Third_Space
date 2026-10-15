@@ -27,9 +27,6 @@ def poll_page(request: Request, group_id: int, poll_id: int, db: Session = Depen
         raise HTTPException(404)
     now = datetime.now(timezone.utc)
     closed = poll.closed_at is not None or now >= voting_deadline(poll)
-    if now >= voting_deadline(poll) and poll.closed_at is None:
-        poll.closed_at = poll.closes_at
-        db.commit()
     options = []
     external_places = {}
     for option in poll.options:

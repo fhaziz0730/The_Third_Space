@@ -63,6 +63,7 @@
     try {
       const response = await fetch(picker.dataset.searchUrl, {
         method: "POST",
+        headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || "" },
         body: new URLSearchParams({ q: searchText }),
         signal: request.signal,
         credentials: "same-origin",

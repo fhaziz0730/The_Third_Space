@@ -35,6 +35,14 @@ class User(Base):
     memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
 
 
+class AuthRateLimit(Base):
+    __tablename__ = "auth_rate_limits"
+
+    bucket: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer)
+
+
 class Group(Base):
     __tablename__ = "groups"
 
@@ -119,7 +127,7 @@ class Poll(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    confirmed_option_id: Mapped[int | None] = mapped_column(ForeignKey("poll_options.id"), nullable=True)
+    confirmed_option_id: Mapped[int | None] = mapped_column(ForeignKey("poll_options.id", name="fk_polls_confirmed_option", use_alter=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     options: Mapped[list["PollOption"]] = relationship(back_populates="poll", cascade="all, delete-orphan", foreign_keys="PollOption.poll_id")
 

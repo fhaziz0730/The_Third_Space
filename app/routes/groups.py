@@ -12,6 +12,7 @@ from ..models import AvailabilityWindow, Group, Membership, Poll, PollOption, Us
 from ..scheduling import ACTIVITIES, generate_candidates
 from ..web import can_manage, current_user, membership_for, page
 from ..location_search import LocationSearchUnavailable, search_locations, uses_sample_locations
+from ..venues import KM_PER_MILE
 
 router = APIRouter()
 
@@ -134,7 +135,7 @@ def availability_page(request: Request, group_id: int, db: Session = Depends(get
 
 
 @router.post("/groups/{group_id}/availability")
-def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db), travel_radius_km: Annotated[str, Form()] = "25", allow_places_discovery: Annotated[str | None, Form()] = None, location_label: Annotated[str | None, Form()] = None, location_picker: Annotated[bool, Form()] = False):
+def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db), travel_radius_miles: Annotated[str | None, Form()] = None, allow_places_discovery: Annotated[str | None, Form()] = None, location_label: Annotated[str | None, Form()] = None, location_picker: Annotated[bool, Form()] = False):
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     user = current_user(request, db)
     member = membership_for(db, user, group_id) if user else None
@@ -151,7 +152,7 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
         "hide_hobbies": bool(hide_hobbies),
         "hide_availability": bool(hide_availability),
         "hide_location": bool(hide_location),
-        "travel_radius_km": travel_radius_km,
+        "travel_radius_miles": travel_radius_miles if travel_radius_miles is not None else str(member.travel_radius_km / KM_PER_MILE),
         "allow_places_discovery": bool(allow_places_discovery),
         "location_label": (location_label or "") if location_picker else (location_label if location_label is not None else broad_location),
     }
@@ -159,11 +160,11 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
     if (location_picker or location_label is not None) and broad_location.strip() and (broad_location != location_label or not latitude.strip() or not longitude.strip()):
         return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Search and choose a matching location, or use your current location, before saving.")
     try:
-        radius = float(travel_radius_km)
-        if not isfinite(radius) or not 1 <= radius <= 200:
+        radius = float(form_values["travel_radius_miles"])
+        if not isfinite(radius) or not 0.1 <= radius <= 125:
             raise ValueError
     except ValueError:
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose a travel radius between 1 and 200 km.")
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose a travel radius between 0.1 and 125 miles.")
     if len(selected_hobbies) > 4 or any(hobby not in ACTIVITIES for hobby in selected_hobbies):
         return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose up to four hobbies from the available activities.")
     try:
@@ -209,7 +210,7 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
     member.hide_hobbies = bool(hide_hobbies)
     member.hide_availability = bool(hide_availability)
     member.hide_location = bool(hide_location)
-    member.travel_radius_km = radius
+    member.travel_radius_km = radius * KM_PER_MILE
     member.allow_places_discovery = bool(allow_places_discovery)
     db.commit()
     return RedirectResponse(f"/groups/{group_id}", status_code=303)
