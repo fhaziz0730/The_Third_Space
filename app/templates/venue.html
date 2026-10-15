@@ -1,18 +1,41 @@
 {% if row.place %}
-  {% if row.option.google_place_id %}<div class="google-place">{% endif %}
-  <p>Suggested place: <strong>{{ row.place.name }}</strong> · {{ row.place.broad_location }}
-    {% if row.maps_url %}<a href="{{ row.maps_url }}" target="_blank" rel="noopener noreferrer">View on Google Maps</a>{% endif %}
+  {% if row.option.google_place_id %}
+    <div class="google-place">
+  {% endif %}
+  <p>
+    Suggested place: <strong>{{ row.place.name }}</strong> · {{ row.place.broad_location }}
+    {% if row.maps_url %}
+      <a href="{{ row.maps_url }}" target="_blank" rel="noopener noreferrer">View on Google Maps</a>
+    {% endif %}
   </p>
   {% if row.option.google_place_id %}
     <p class="google-attribution" translate="no">Google Maps</p>
-    {% for provider, uri in row.place.attributions %}<p class="muted">{% if uri %}<a href="{{ uri }}" rel="noopener noreferrer">{{ provider }}</a>{% else %}{{ provider }}{% endif %}</p>{% endfor %}
+    {% for provider, uri in row.place.attributions %}
+      <p class="muted">
+        {% if uri %}
+          <a href="{{ uri }}" rel="noopener noreferrer">{{ provider }}</a>
+        {% else %}
+          {{ provider }}
+        {% endif %}
+      </p>
+    {% endfor %}
     </div>
   {% endif %}
   {% if row.venue_summary %}
     <p class="muted">
-      {% if row.venue_summary.my_distance is not none %}About {{ '%.1f'|format(row.venue_summary.my_distance / km_per_mile) }} miles from your starting area. {% endif %}
-      {% if not row.venue_summary.located %}Distance ranking is unavailable until attendees add coordinates.{% elif row.venue_summary.within_radius %}Within the preferred radius of all {{ row.venue_summary.located }} available members with coordinates.{% else %}Outside at least one available member's preferred radius.{% endif %}
-      {% if row.venue_summary.missing %} {{ row.venue_summary.missing }} available member(s) have no coordinates; their distances are unknown.{% endif %}
+      {% if row.venue_summary.my_distance is not none %}
+        About {{ '%.1f'|format(row.venue_summary.my_distance / km_per_mile) }} miles from your starting area.
+      {% endif %}
+      {% if not row.venue_summary.located %}
+        Distance ranking is unavailable until attendees add coordinates.
+      {% elif row.venue_summary.within_radius %}
+        Within the preferred radius of all {{ row.venue_summary.located }} available members with coordinates.
+      {% else %}
+        Outside at least one available member's preferred radius.
+      {% endif %}
+      {% if row.venue_summary.missing %}
+        {{ row.venue_summary.missing }} available member(s) have no coordinates; their distances are unknown.
+      {% endif %}
     </p>
   {% endif %}
 {% elif row.maps_url %}

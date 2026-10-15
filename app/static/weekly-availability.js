@@ -35,7 +35,10 @@
     select.className = className;
     select.setAttribute("aria-label", label);
     wrapper.append(caption, select);
-    return { wrapper, select };
+    return {
+      wrapper,
+      select
+    };
   }
 
   function addOption(select, value, label, selectedValue) {
@@ -49,13 +52,15 @@
   function fillStartOptions(select, selectedValue) {
     select.replaceChildren();
     const minutes = [...new Set([...times, parseTime(selectedValue)])].sort((a, b) => a - b);
-    minutes.forEach((minute) => addOption(select, timeValue(minute), timeLabel(minute), selectedValue));
+    minutes.forEach((minute) => addOption(select, timeValue(minute), timeLabel(minute),
+      selectedValue));
   }
 
   function fillEndOptions(select, startMinute, selectedValue) {
     select.replaceChildren();
     // Each window must have a positive duration within the selected day.
-    const minutes = [...new Set([...times, 1439, parseTime(selectedValue)])].filter((minute) => Number.isFinite(minute) && minute > startMinute && minute < 1440).sort((a, b) => a - b);
+    const minutes = [...new Set([...times, 1439, parseTime(selectedValue)])].filter((minute) =>
+      Number.isFinite(minute) && minute > startMinute && minute < 1440).sort((a, b) => a - b);
     minutes.forEach((minute) => {
       addOption(select, timeValue(minute), timeLabel(minute), selectedValue);
     });
@@ -97,7 +102,9 @@
     source.value = values.join("\n");
     const overlapDay = findOverlap();
     if (error) {
-      error.textContent = invalidRange ? "Each end time must be later than its start time." : (overlapDay ? `Availability windows overlap on ${overlapDay}. Adjust the times before saving.` : "");
+      error.textContent = invalidRange ? "Each end time must be later than its start time." : (
+        overlapDay ?
+        `Availability windows overlap on ${overlapDay}. Adjust the times before saving.` : "");
       error.hidden = !invalidRange && !overlapDay;
     }
     return invalidRange || Boolean(overlapDay);
@@ -109,7 +116,8 @@
 
     const dayField = makeSelect("Day", "day-select");
     dayField.wrapper.classList.add("day-field");
-    days.forEach((day, index) => addOption(dayField.select, String(index), day, String(existing?.day ?? (rows.children.length % 7))));
+    days.forEach((day, index) => addOption(dayField.select, String(index), day, String(existing
+      ?.day ?? (rows.children.length % 7))));
 
     const startField = makeSelect("Start", "start-select");
     startField.wrapper.classList.add("start-field");
@@ -147,7 +155,11 @@
     source.value.split(/\r?\n/).forEach((line) => {
       const [day, start, end] = line.trim().split(",").map((part) => part.trim());
       if (day === undefined || !start || !end) return;
-      addRow({ day: Number(day), start, end });
+      addRow({
+        day: Number(day),
+        start,
+        end
+      });
     });
   }
 

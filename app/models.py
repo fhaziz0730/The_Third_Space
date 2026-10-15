@@ -1,7 +1,7 @@
-from datetime import datetime, time, timezone
 import base64
 import hashlib
 import os
+from datetime import datetime, time, timezone
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Time, UniqueConstraint
@@ -56,7 +56,9 @@ class Group(Base):
     join_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    memberships: Mapped[list["Membership"]] = relationship(back_populates="group", cascade="all, delete-orphan")
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
 
 
 class Membership(Base):
@@ -74,7 +76,9 @@ class Membership(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     travel_radius_km: Mapped[float] = mapped_column(Float, default=25.0, server_default="25")
-    allow_places_discovery: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    allow_places_discovery: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     hide_hobbies: Mapped[bool] = mapped_column(Boolean, default=False)
     hide_availability: Mapped[bool] = mapped_column(Boolean, default=False)
     hide_location: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -94,7 +98,9 @@ class Membership(Base):
 
     @exact_address.setter
     def exact_address(self, value: str):
-        self.exact_address_ciphertext = address_cipher().encrypt(value.encode()).decode() if value else ""
+        self.exact_address_ciphertext = (
+            address_cipher().encrypt(value.encode()).decode() if value else ""
+        )
 
 
 class AvailabilityWindow(Base):
@@ -127,9 +133,31 @@ class Poll(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    confirmed_option_id: Mapped[int | None] = mapped_column(ForeignKey("poll_options.id", name="fk_polls_confirmed_option", use_alter=True), nullable=True)
+    confirmed_option_id: Mapped[int | None] = mapped_column(
+        ForeignKey("poll_options.id", name="fk_polls_confirmed_option", use_alter=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    options: Mapped[list["PollOption"]] = relationship(back_populates="poll", cascade="all, delete-orphan", foreign_keys="PollOption.poll_id")
+    options: Mapped[list["PollOption"]] = relationship(
+        back_populates="poll", cascade="all, delete-orphan", foreign_keys="PollOption.poll_id"
+    )
+
+    @property
+    def deadline(self):
+        # SQLite returns naive datetimes; deadlines are always stored as UTC.
+        return (
+            self.closes_at.replace(tzinfo=timezone.utc)
+            if self.closes_at.tzinfo is None
+            else self.closes_at
+        )
+
+    @property
+    def is_closed(self):
+        return self.closed_at is not None or utc_now() >= self.deadline
+
+    @property
+    def voting_open(self):
+        return not self.is_closed and self.confirmed_option_id is None
 
 
 class PollOption(Base):
@@ -145,6 +173,15 @@ class PollOption(Base):
     available_user_ids: Mapped[str] = mapped_column(String(1000), default="")
     poll: Mapped[Poll] = relationship(back_populates="options", foreign_keys=[poll_id])
     place: Mapped[Place | None] = relationship()
+
+    @property
+    def available_ids(self) -> set[int]:
+        """Keep the legacy CSV storage detail out of routes and templates."""
+        return {int(value) for value in self.available_user_ids.split(",") if value.strip()}
+
+    @available_ids.setter
+    def available_ids(self, user_ids):
+        self.available_user_ids = ",".join(str(user_id) for user_id in sorted(set(user_ids)))
 
 
 class Vote(Base):

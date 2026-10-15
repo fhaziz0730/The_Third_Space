@@ -1,0 +1,18 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["migrations", ".dev-deps", ".uv-cache"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.djlint]
+profile = "jinja"
+indent = 2
+max_line_length = 100
+preserve_blank_lines = false
+format_css = false
+format_js = false
+single_attribute_per_line = true
+line_break_after_multiline_tag = true
+blank_line_after_tag = "extends"

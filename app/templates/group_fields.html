@@ -1,0 +1,39 @@
+<label>
+  Group name
+  <input name="name" value="{{ form.name }}" required maxlength="100">
+</label>
+<label>
+  Description
+  <textarea name="description" maxlength="500" rows="3">{{ form.description }}</textarea>
+</label>
+<label>
+  Group interests <span class="muted">(comma separated)</span>
+  <input
+    name="hobbies"
+    value="{{ form.hobbies }}"
+    placeholder="hiking, board games, coffee"
+  >
+</label>
+<label>
+  Who can join
+  <select name="visibility">
+    <option
+      value="public"
+      {% if form.visibility == "public" %}selected{% endif %}
+    >Public — anyone with the link</option>
+    <option
+      value="private"
+      {% if form.visibility == "private" %}selected{% endif %}
+    >Private — invite link only</option>
+  </select>
+</label>
+<label>
+  Member limit <span class="muted">(optional)</span>
+  <input
+    name="member_limit"
+    type="number"
+    min="2"
+    value="{{ form.member_limit }}"
+    placeholder="No limit"
+  >
+</label>

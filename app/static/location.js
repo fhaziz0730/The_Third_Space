@@ -37,7 +37,9 @@
 
   query.addEventListener("input", () => {
     invalidate();
-    status.textContent = query.value.trim() ? "Search and choose a match to update your starting area." : "No starting area chosen. Save to remove the previous location.";
+    status.textContent = query.value.trim() ?
+      "Search and choose a match to update your starting area." :
+      "No starting area chosen. Save to remove the previous location.";
   });
 
   document.getElementById("clear-location").addEventListener("click", () => {
@@ -63,16 +65,23 @@
     try {
       const response = await fetch(picker.dataset.searchUrl, {
         method: "POST",
-        headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || "" },
-        body: new URLSearchParams({ q: searchText }),
+        headers: {
+          "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || ""
+        },
+        body: new URLSearchParams({
+          q: searchText
+        }),
         signal: request.signal,
         credentials: "same-origin",
       });
       const data = await response.json();
       if (version !== revision) return;
-      if (!response.ok) throw new Error(data.error || "Location search is unavailable. Please try again.");
+      if (!response.ok) throw new Error(data.error ||
+        "Location search is unavailable. Please try again.");
       if (!data.results.length) {
-        status.textContent = data.sample ? "No sample location matched. Try Brooklyn, New York, Boston, or use your current location." : "No locations found. Try a nearby town or add the state or country.";
+        status.textContent = data.sample ?
+          "No sample location matched. Try Brooklyn, New York, Boston, or use your current location." :
+          "No locations found. Try a nearby town or add the state or country.";
         return;
       }
       for (const location of data.results) {
@@ -86,10 +95,12 @@
         results.append(item);
       }
       results.hidden = false;
-      status.textContent = data.sample ? "Choose a sample location below." : "Choose the matching town or area below.";
+      status.textContent = data.sample ? "Choose a sample location below." :
+        "Choose the matching town or area below.";
     } catch (error) {
       if (version !== revision || error.name === "AbortError") return;
-      status.textContent = error.message || "Search failed. Try again or use your current location.";
+      status.textContent = error.message ||
+        "Search failed. Try again or use your current location.";
     } finally {
       if (controller === request) {
         controller = null;
@@ -108,7 +119,8 @@
 
   currentButton.addEventListener("click", () => {
     if (!navigator.geolocation) {
-      status.textContent = "Your browser cannot share a location. Search for your town instead.";
+      status.textContent =
+        "Your browser cannot share a location. Search for your town instead.";
       return;
     }
     controller?.abort();
@@ -119,16 +131,26 @@
     resetResults();
     status.textContent = "Waiting for your browser's location permission…";
     navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
+      ({
+        coords
+      }) => {
         currentButton.disabled = false;
         if (version !== revision) return;
-        selectLocation({ label: "Near my current location", latitude: coords.latitude.toFixed(2), longitude: coords.longitude.toFixed(2) });
+        selectLocation({
+          label: "Near my current location",
+          latitude: coords.latitude.toFixed(2),
+          longitude: coords.longitude.toFixed(2)
+        });
       },
       () => {
         currentButton.disabled = false;
-        if (version === revision) status.textContent = "Location was unavailable or permission was declined. Search for your town instead.";
+        if (version === revision) status.textContent =
+          "Location was unavailable or permission was declined. Search for your town instead.";
+      }, {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
   });
 })();

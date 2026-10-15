@@ -1,35 +1,19 @@
-from datetime import datetime, timedelta, timezone
 import secrets
-from math import isfinite
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from ..access import can_manage, current_user, membership_for, require_membership
 from ..db import get_db
-from ..models import AvailabilityWindow, Group, Membership, Poll, PollOption, User
-from ..scheduling import ACTIVITIES, generate_candidates
-from ..web import can_manage, current_user, membership_for, page
-from ..location_search import LocationSearchUnavailable, search_locations, uses_sample_locations
-from ..venues import KM_PER_MILE
+from ..groups import GroupForm
+from ..models import Group, Membership, Poll, PollOption
+from ..scheduling import generate_candidates
+from ..web import page
 
 router = APIRouter()
-
-
-@router.post("/groups/{group_id}/location-search")
-def location_search(request: Request, group_id: int, q: Annotated[str, Form()], db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    if not user or not membership_for(db, user, group_id):
-        raise HTTPException(404)
-    try:
-        results = search_locations(q)
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except LocationSearchUnavailable:
-        return JSONResponse({"error": "Location search is unavailable. Try again or use your current location."}, status_code=503)
-    return JSONResponse({"results": results, "sample": uses_sample_locations()},
-                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/groups/new", response_class=HTMLResponse)
@@ -37,16 +21,21 @@ def new_group_page(request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return page(request, "new_group.html", user=user)
+    return page(request, "new_group.html", user=user, form=GroupForm())
 
 
 @router.post("/groups")
-def create_group(request: Request, name: str = Form(), description: str = Form(""), hobbies: str = Form(""), visibility: str = Form("public"), member_limit: str = Form(""), db: Session = Depends(get_db)):
+def create_group(
+    request: Request, form: Annotated[GroupForm, Form()], db: Session = Depends(get_db)
+):
     user = current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    limit = int(member_limit) if member_limit.strip().isdigit() else None
-    group = Group(name=name.strip()[:100], description=description.strip()[:500], hobbies=hobbies[:1000], is_private=visibility == "private", member_limit=limit, owner_id=user.id, join_token=secrets.token_urlsafe(18))
+    group = Group(owner_id=user.id, join_token=secrets.token_urlsafe(18))
+    try:
+        form.apply_to(group, member_count=1)
+    except ValueError as exc:
+        return page(request, "new_group.html", user=user, form=form, error=str(exc))
     db.add(group)
     db.flush()
     db.add(Membership(group_id=group.id, user_id=user.id, role="owner"))
@@ -64,12 +53,22 @@ def join_page(request: Request, token: str, db: Session = Depends(get_db)):
     if not user:
         request.session["pending_invitation"] = f"/join/{group.join_token}"
     full = group.member_limit is not None and members >= group.member_limit
-    return page(request, "join.html", user=user, group=group, full=full, is_member=bool(user and membership_for(db, user, group.id)))
+    return page(
+        request,
+        "join.html",
+        user=user,
+        group=group,
+        full=full,
+        is_member=bool(user and membership_for(db, user, group.id)),
+    )
 
 
 @router.post("/join/{token}")
 def join_group(request: Request, token: str, db: Session = Depends(get_db)):
-    group = db.query(Group).filter_by(join_token=token).first()
+    # Serialize joins so concurrent requests cannot exceed the member limit.
+    group = (
+        db.query(Group).filter_by(join_token=token).with_for_update().populate_existing().first()
+    )
     if not group:
         raise HTTPException(404)
     user = current_user(request, db)
@@ -95,139 +94,63 @@ def group_page(request: Request, group_id: int, db: Session = Depends(get_db)):
     if not group or not member:
         raise HTTPException(404)
     polls = db.query(Poll).filter_by(group_id=group_id).order_by(Poll.created_at.desc()).all()
-    return page(request, "group.html", user=user, group=group, member=member, polls=polls, can_manage=can_manage(member), member_count=len(group.memberships))
+    return page(
+        request,
+        "group.html",
+        user=user,
+        group=group,
+        member=member,
+        polls=polls,
+        can_manage=can_manage(member),
+        member_count=len(group.memberships),
+    )
 
 
 @router.get("/groups/{group_id}/settings", response_class=HTMLResponse)
 def group_settings_page(request: Request, group_id: int, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member or not can_manage(member):
-        raise HTTPException(403)
-    return page(request, "group_settings.html", user=user, group=member.group)
+    member = require_membership(db, user, group_id, manage=True)
+    return page(
+        request,
+        "group_settings.html",
+        user=user,
+        group=member.group,
+        form=GroupForm.from_group(member.group),
+    )
 
 
 @router.post("/groups/{group_id}/settings")
-def save_group_settings(request: Request, group_id: int, name: str = Form(), description: str = Form(""), hobbies: str = Form(""), visibility: str = Form("public"), member_limit: str = Form(""), db: Session = Depends(get_db)):
+def save_group_settings(
+    request: Request,
+    group_id: int,
+    form: Annotated[GroupForm, Form()],
+    db: Session = Depends(get_db),
+):
     user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member or not can_manage(member):
-        raise HTTPException(403)
-    limit = int(member_limit) if member_limit.strip().isdigit() else None
-    if limit is not None and limit < len(member.group.memberships):
-        return page(request, "group_settings.html", user=user, group=member.group, error="The member limit cannot be lower than the current number of members.")
-    member.group.name = name.strip()[:100]
-    member.group.description = description.strip()[:500]
-    member.group.hobbies = hobbies[:1000]
-    member.group.is_private = visibility == "private"
-    member.group.member_limit = limit
-    db.commit()
-    return RedirectResponse(f"/groups/{group_id}", status_code=303)
-
-
-@router.get("/groups/{group_id}/availability", response_class=HTMLResponse)
-def availability_page(request: Request, group_id: int, db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member:
-        raise HTTPException(404)
-    return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows)
-
-
-@router.post("/groups/{group_id}/availability")
-def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db), travel_radius_miles: Annotated[str | None, Form()] = None, allow_places_discovery: Annotated[str | None, Form()] = None, location_label: Annotated[str | None, Form()] = None, location_picker: Annotated[bool, Form()] = False):
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-    user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member:
-        raise HTTPException(404)
-    form_values = {
-        "timezone_name": timezone_name,
-        "schedule": schedule,
-        "hobbies": ",".join(hobbies),
-        "broad_location": broad_location,
-        "exact_address": exact_address,
-        "latitude": latitude,
-        "longitude": longitude,
-        "hide_hobbies": bool(hide_hobbies),
-        "hide_availability": bool(hide_availability),
-        "hide_location": bool(hide_location),
-        "travel_radius_miles": travel_radius_miles if travel_radius_miles is not None else str(member.travel_radius_km / KM_PER_MILE),
-        "allow_places_discovery": bool(allow_places_discovery),
-        "location_label": (location_label or "") if location_picker else (location_label if location_label is not None else broad_location),
-    }
-    selected_hobbies = list(dict.fromkeys(hobbies))
-    if (location_picker or location_label is not None) and broad_location.strip() and (broad_location != location_label or not latitude.strip() or not longitude.strip()):
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Search and choose a matching location, or use your current location, before saving.")
+    member = require_membership(db, user, group_id, manage=True)
+    group = db.query(Group).filter_by(id=group_id).with_for_update().populate_existing().one()
     try:
-        radius = float(form_values["travel_radius_miles"])
-        if not isfinite(radius) or not 0.1 <= radius <= 125:
-            raise ValueError
-    except ValueError:
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose a travel radius between 0.1 and 125 miles.")
-    if len(selected_hobbies) > 4 or any(hobby not in ACTIVITIES for hobby in selected_hobbies):
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose up to four hobbies from the available activities.")
-    try:
-        ZoneInfo(timezone_name)
-        parsed = []
-        for line in schedule.splitlines():
-            if not line.strip():
-                continue
-            day, start, end = [part.strip() for part in line.split(",")]
-            day_num = int(day)
-            start_time, end_time = datetime.strptime(start, "%H:%M").time(), datetime.strptime(end, "%H:%M").time()
-            if not 0 <= day_num <= 6 or start_time >= end_time:
-                raise ValueError
-            parsed.append((day_num, start_time, end_time))
-    except (ValueError, ZoneInfoNotFoundError):
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Use a valid time zone and one 'weekday,start,end' window per line, with the end later than the start on the same day. Weekdays are Monday=0 through Sunday=6.")
-    by_day = {}
-    for weekday, starts_at, ends_at in parsed:
-        if starts_at < ends_at:
-            by_day.setdefault(weekday, []).append((starts_at, ends_at))
-    for weekday, day_windows in by_day.items():
-        day_windows.sort()
-        if any(current_start < previous_end for (_, previous_end), (current_start, _) in zip(day_windows, day_windows[1:])):
-            day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][weekday]
-            return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error=f"Some availability windows overlap on {day_name}. Adjust the times before saving.")
-    member.windows.clear()
-    for weekday, starts_at, ends_at in parsed:
-        member.windows.append(AvailabilityWindow(weekday=weekday, starts_at=starts_at, ends_at=ends_at))
-    member.timezone_name = timezone_name
-    member.hobbies = ",".join(selected_hobbies)
-    member.broad_location = broad_location[:160]
-    member.exact_address = exact_address[:400]
-    try:
-        member.latitude = float(latitude) if latitude.strip() else None
-        member.longitude = float(longitude) if longitude.strip() else None
-        if (member.latitude is None) != (member.longitude is None):
-            raise ValueError
-        if member.latitude is not None and not (-90 <= member.latitude <= 90 and -180 <= member.longitude <= 180):
-            raise ValueError
-    except ValueError:
-        db.rollback()
-        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, form_values=form_values, error="Enter both valid latitude and longitude values, or leave both blank.")
-    member.hide_hobbies = bool(hide_hobbies)
-    member.hide_availability = bool(hide_availability)
-    member.hide_location = bool(hide_location)
-    member.travel_radius_km = radius * KM_PER_MILE
-    member.allow_places_discovery = bool(allow_places_discovery)
+        form.apply_to(group, member_count=len(group.memberships))
+    except ValueError as exc:
+        return page(
+            request, "group_settings.html", user=user, group=member.group, form=form, error=str(exc)
+        )
     db.commit()
     return RedirectResponse(f"/groups/{group_id}", status_code=303)
 
 
 @router.post("/groups/{group_id}/members/{user_id}/role")
-def change_member_role(request: Request, group_id: int, user_id: int, db: Session = Depends(get_db)):
+def change_member_role(
+    request: Request, group_id: int, user_id: int, db: Session = Depends(get_db)
+):
     user = current_user(request, db)
-    manager = membership_for(db, user, group_id) if user else None
-    target = membership_for(db, db.get(User, user_id), group_id) if db.get(User, user_id) else None
-    if not manager or not can_manage(manager) or not target or target.role == "owner":
+    manager = require_membership(db, user, group_id, manage=True)
+    target = db.query(Membership).filter_by(group_id=group_id, user_id=user_id).first()
+    if not target or target.role == "owner":
         raise HTTPException(403)
-    # Only the owner can grant or revoke admin privileges.
-    if target.role == "admin" and manager.role != "owner":
+    if manager.role != "owner":
         raise HTTPException(403)
-    if manager.role == "owner":
-        target.role = "member" if target.role == "admin" else "admin"
+    target.role = "member" if target.role == "admin" else "admin"
     db.commit()
     return RedirectResponse(f"/groups/{group_id}", status_code=303)
 
@@ -235,10 +158,9 @@ def change_member_role(request: Request, group_id: int, user_id: int, db: Sessio
 @router.post("/groups/{group_id}/members/{user_id}/remove")
 def remove_member(request: Request, group_id: int, user_id: int, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    manager = membership_for(db, user, group_id) if user else None
-    target_user = db.get(User, user_id)
-    target = membership_for(db, target_user, group_id) if target_user else None
-    if not manager or not can_manage(manager) or not target or target.role == "owner":
+    manager = require_membership(db, user, group_id, manage=True)
+    target = db.query(Membership).filter_by(group_id=group_id, user_id=user_id).first()
+    if not target or target.role == "owner":
         raise HTTPException(403)
     if manager.role != "owner" and target.role == "admin":
         raise HTTPException(403)
@@ -250,9 +172,7 @@ def remove_member(request: Request, group_id: int, user_id: int, db: Session = D
 @router.post("/groups/{group_id}/leave")
 def leave_group(request: Request, group_id: int, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member:
-        raise HTTPException(404)
+    member = require_membership(db, user, group_id)
     if member.role == "owner":
         raise HTTPException(409, "The owner must transfer ownership before leaving.")
     db.delete(member)
@@ -263,20 +183,31 @@ def leave_group(request: Request, group_id: int, db: Session = Depends(get_db)):
 @router.post("/groups/{group_id}/suggestions")
 def create_suggestions(request: Request, group_id: int, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    member = membership_for(db, user, group_id) if user else None
-    if not member or not can_manage(member):
-        raise HTTPException(403)
+    member = require_membership(db, user, group_id, manage=True)
     group = member.group
     notices = []
     options = generate_candidates(db, group, notices=notices)
     if not options:
         return RedirectResponse(f"/groups/{group_id}?message=no-suggestions", status_code=303)
-    poll = Poll(group_id=group_id, created_by=user.id, closes_at=datetime.now(timezone.utc) + timedelta(hours=2))
+    poll = Poll(
+        group_id=group_id,
+        created_by=user.id,
+        closes_at=datetime.now(timezone.utc) + timedelta(hours=2),
+    )
     db.add(poll)
     db.flush()
     for option in options:
-        venue = option["place"]
-        poll.options.append(PollOption(activity=option["activity"], duration_minutes=option["duration_minutes"], starts_at=option["starts_at"], place_id=venue.id if venue else None, google_place_id=getattr(venue, "google_place_id", None), available_user_ids=",".join(str(person.user_id) for person in option["available"])))
+        venue = option.place
+        poll.options.append(
+            PollOption(
+                activity=option.activity,
+                duration_minutes=option.duration_minutes,
+                starts_at=option.starts_at,
+                place_id=venue.id if venue else None,
+                google_place_id=getattr(venue, "google_place_id", None),
+                available_ids=[person.user_id for person in option.available],
+            )
+        )
     db.commit()
     suffix = "?message=places-unavailable" if notices else ""
     return RedirectResponse(f"/groups/{group_id}/polls/{poll.id}{suffix}", status_code=303)

@@ -11,12 +11,20 @@ A small server-rendered FastAPI application for forming activity groups, recurri
 
 ## Application layout
 
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for a guided tour, common feature changes,
+transaction rules, and the structural review. Formatting is configured in
+`pyproject.toml` and enforced by CI.
+
 - `app/main.py` creates the FastAPI application and includes the route groups.
 - `app/routes/auth.py` contains the home, registration, login, and logout routes.
-- `app/routes/groups.py` contains group, membership, and availability routes.
+- `app/routes/groups.py` contains group settings, memberships, and poll creation.
+- `app/routes/profiles.py` handles group profiles and authenticated location search.
+- `app/groups.py` and `app/profiles.py` hold shared form models and validation.
 - `app/routes/polls.py` contains poll, voting, and RSVP routes.
 - `app/routes/places.py` contains the place catalog routes.
-- `app/web.py` contains shared request, template, and membership helpers.
+- `app/access.py` contains authentication and group permission checks.
+- `app/web.py` handles template rendering and reusable markup.
+- `app/activities.py` defines activity tags, labels, durations, and provider categories.
 - `app/security.py` contains password hashing helpers.
 
 ## Run locally
@@ -161,7 +169,7 @@ PostgreSQL/GnuPG tools and an explicitly configured disposable database.
 ## Prototype notes
 
 - Candidate times use group member weekly windows and each member's IANA time zone. Times are presented in UTC in this first pass.
-- Candidate activities and default durations are in `app/scheduling.py`.
+- Candidate activities and default durations are in `app/activities.py`; the scheduling pipeline is in `app/scheduling.py`.
 - Place ranking uses haversine straight-line distance; mock mode includes fictional venues and member coordinates for exploring ranking. Town/postal-code search and approximate browser location fill coordinates automatically. Do not treat these distances as driving estimates.
 - Exact address data is currently collected as an optional field, encrypted at rest with `ADDRESS_ENCRYPTION_KEY`, not sent anywhere, and not used for ranking. Keep this key stable and private; existing addresses cannot be decrypted if the key changes. Select a privacy-appropriate geocoding provider before connecting that field to geocoding. The public OpenStreetMap Nominatim service must not receive personal or confidential address data; see its [usage policy](https://operations.osmfoundation.org/policies/nominatim/).
 - Set strong, stable `SESSION_SECRET` and `ADDRESS_ENCRYPTION_KEY` values and enable `COOKIE_SECURE=true` when served over HTTPS. Generate the address key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.

@@ -5,7 +5,17 @@ from sqlalchemy.orm import Session
 
 from app.db import Base
 from app.mock_data import DEMO_PASSWORD, seed_mock_data
-from app.models import AvailabilityWindow, Group, Membership, Place, Poll, PollOption, RSVP, User, Vote
+from app.models import (
+    RSVP,
+    AvailabilityWindow,
+    Group,
+    Membership,
+    Place,
+    Poll,
+    PollOption,
+    User,
+    Vote,
+)
 from app.security import password_matches
 
 
@@ -26,9 +36,17 @@ class MockDataTests(unittest.TestCase):
 
     def test_seed_has_working_accounts_and_poll_states_and_preserves_edits(self):
         self.assertTrue(seed_mock_data(self.db))
-        for model, count in ((User, 6), (Group, 3), (Membership, 11),
-                             (AvailabilityWindow, 33), (Place, 4), (Poll, 3),
-                             (PollOption, 9), (Vote, 15), (RSVP, 3)):
+        for model, count in (
+            (User, 6),
+            (Group, 3),
+            (Membership, 11),
+            (AvailabilityWindow, 33),
+            (Place, 4),
+            (Poll, 3),
+            (PollOption, 9),
+            (Vote, 15),
+            (RSVP, 3),
+        ):
             self.assertEqual(self.db.query(model).count(), count, model.__name__)
         alex = self.db.query(User).filter_by(email="alex@example.com").one()
         self.assertTrue(password_matches(DEMO_PASSWORD, alex.password_hash))

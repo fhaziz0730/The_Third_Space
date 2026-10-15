@@ -1,60 +1,186 @@
 {% extends "base.html" %}
-{% block title %}Group profile · {{ group.name }}{% endblock %}
-{% block content %}
-<p><a href="/groups/{{ group.id }}">← {{ group.name }}</a></p>
-<section class="availability-editor">
-  <p class="eyebrow">Set once for this group</p>
-  <h1>Your interests and schedule</h1>
-  <p class="muted">Add the recurring times you are usually free each week. You can add several windows on the same day. Times use your selected time zone.</p>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" class="stack" id="availability-form">{{ csrf_input(request) }}
-    <label class="timezone-field">Time zone<input name="timezone_name" value="{{ form_values.timezone_name if form_values is defined else member.timezone_name }}" placeholder="America/New_York" required></label>
 
-    <section class="availability-list" aria-labelledby="availability-heading">
-      <div class="availability-list-heading"><div><h2 id="availability-heading">Weekly availability</h2><p class="muted">Choose a day and time range for each window.</p></div></div>
-      <p class="error" id="window-error" role="alert" hidden></p>
-      <div id="window-rows" class="window-rows"></div>
-      <button class="secondary add-window" id="add-window" type="button">+ Add a time</button>
-      <label class="schedule-fallback">Weekly windows <span class="muted">(if the form controls fail to load, use weekday,start,end per line)</span><textarea name="schedule" id="schedule-source" rows="5">{% if form_values is defined %}{{ form_values.schedule }}{% else %}{% for w in windows %}{{ w.weekday }},{{ w.starts_at.strftime('%H:%M') }},{{ w.ends_at.strftime('%H:%M') }}{% if not loop.last %}&#10;{% endif %}{% endfor %}{% endif %}</textarea></label>
-      <noscript><p class="notice">JavaScript is needed for the add/remove controls. You can enter windows using the fallback field above.</p></noscript>
-    </section>
-
-    {% set selected_hobbies = (form_values.hobbies if form_values is defined else member.hobbies).lower().split(',') | map('trim') | list %}
-    <fieldset class="activity-picker" aria-describedby="activity-help activity-count">
-      <legend>Hobbies and activities</legend>
-      <p class="muted" id="activity-help">Choose up to 4 activities you enjoy.</p>
-      <div class="activity-choices">
-        {% for activity in activity_choices %}
-        <label class="activity-choice"><input type="checkbox" name="hobbies" value="{{ activity }}" {% if activity in selected_hobbies %}checked{% endif %}><span>{{ activity | title }}</span></label>
-        {% endfor %}
-      </div>
-      <p class="muted" id="activity-count" role="status" aria-live="polite"></p>
-    </fieldset>
-    <section class="location-picker" aria-labelledby="location-heading" data-search-url="/groups/{{ group.id }}/location-search">
-      <h2 id="location-heading">Your starting area</h2>
-      <p class="muted" id="location-help">Search for your town, city, or ZIP/postal code, then choose a match. A nearby town is enough; please don't enter a street address.</p>
-      <label>Town or postal code<input id="location-query" name="broad_location" value="{{ form_values.broad_location if form_values is defined else member.broad_location }}" placeholder="e.g. Brooklyn or 11201" maxlength="160" aria-describedby="location-help location-status" autocomplete="off"></label>
-      <div class="location-actions"><button type="button" id="search-location">Search locations</button><button type="button" class="secondary" id="approximate-location">Use my current location</button><button type="button" class="secondary" id="clear-location">Clear location</button></div>
-      <p class="muted" id="location-status" role="status" aria-live="polite">{% if (form_values.latitude if form_values is defined else member.latitude) is not none and (form_values.latitude if form_values is defined else member.latitude) != '' %}Starting area added. Save your profile to keep any changes.{% else %}No starting area chosen yet. Location is optional.{% endif %}</p>
-      <ul id="location-results" class="plain-list location-results" aria-label="Location matches" hidden></ul>
-      <p class="muted">Live town search data: <a href="https://open-meteo.com/">Open-Meteo</a> / <a href="https://www.geonames.org/">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
-      <p class="muted">Search sends only your search text to Open-Meteo; demo mode uses sample locations offline. Current location requires browser permission and is rounded before saving. Your starting coordinates are not shown to other members.</p>
-      <input type="hidden" name="location_label" id="location-label" value="{{ form_values.location_label if form_values is defined else (member.broad_location if member.latitude is not none else '') }}">
-      <input type="hidden" name="location_picker" value="true">
-      <input type="hidden" name="latitude" id="location-latitude" value="{{ form_values.latitude if form_values is defined else (member.latitude if member.latitude is not none else '') }}">
-      <input type="hidden" name="longitude" id="location-longitude" value="{{ form_values.longitude if form_values is defined else (member.longitude if member.longitude is not none else '') }}">
-      <noscript><p class="notice">Location search needs JavaScript. Enable it to choose a starting area, or leave location blank.</p></noscript>
-    </section>
-    <details><summary>Optional private address</summary><p class="muted">Not needed for venue suggestions. This address is encrypted and is not sent to location search services.</p><label>Exact starting address<input name="exact_address" value="{{ form_values.exact_address if form_values is defined else member.exact_address }}" autocomplete="street-address"></label></details>
-    <label>Preferred travel radius (miles)<input name="travel_radius_miles" type="number" min="0.1" max="125" step="any" required value="{{ form_values.travel_radius_miles if form_values is defined else ((member.travel_radius_km / km_per_mile) | round(2)) }}"></label>
-    <p class="muted">We prefer venues within everyone's radius, then the shortest longest journey. Alternatives outside a preferred radius are labeled. Distances are straight-line estimates, not travel times.</p>
-    <label class="check"><input name="allow_places_discovery" type="checkbox" {% if (form_values.allow_places_discovery if form_values is defined else member.allow_places_discovery) %}checked{% endif %}> Allow my approximate location to help find venues through Google Places</label>
-    <p class="muted">When Google discovery is enabled, rounded search areas based on opted-in members are sent to Google. Names, addresses, and individual profiles are not sent. Turning this off still allows private distance ranking against the venue catalog. Hiding your broad location below only affects what other members see.</p>
-    <label class="check"><input name="hide_hobbies" type="checkbox" {% if (form_values.hide_hobbies if form_values is defined else member.hide_hobbies) %}checked{% endif %}> Hide my hobbies from this group</label>
-    <label class="check"><input name="hide_availability" type="checkbox" {% if (form_values.hide_availability if form_values is defined else member.hide_availability) %}checked{% endif %}> Hide my availability from this group</label>
-    <label class="check"><input name="hide_location" type="checkbox" {% if (form_values.hide_location if form_values is defined else member.hide_location) %}checked{% endif %}> Hide my broad location from this group</label>
-    <button>Save group profile</button>
-  </form>
-</section>
+{% block title %}Group profile · {{ group.name }}
 {% endblock %}
-{% block scripts %}<script src="/static/weekly-availability.js" defer></script><script src="/static/activity-picker.js" defer></script><script src="/static/location.js" defer></script>{% endblock %}
+{% block content %}
+  <p><a href="/groups/{{ group.id }}">← {{ group.name }}</a></p>
+  <section class="availability-editor">
+    <p class="eyebrow">Set once for this group</p>
+    <h1>Your interests and schedule</h1>
+    <p class="muted">Add the recurring times you are usually free each week. You can add several windows on the same day. Times use your selected time zone.</p>
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+    <form method="post" class="stack" id="availability-form">
+      {{ csrf_input(request) }}
+      <label class="timezone-field">
+        Time zone
+        <input
+          name="timezone_name"
+          value="{{ form_values.timezone_name }}"
+          placeholder="America/New_York"
+          required
+        >
+      </label>
+      <section class="availability-list" aria-labelledby="availability-heading">
+        <div class="availability-list-heading">
+          <div>
+            <h2 id="availability-heading">Weekly availability</h2>
+            <p class="muted">Choose a day and time range for each window.</p>
+          </div>
+        </div>
+        <p class="error" id="window-error" role="alert" hidden></p>
+        <div id="window-rows" class="window-rows"></div>
+        <button class="secondary add-window" id="add-window" type="button">+ Add a time</button>
+        <label class="schedule-fallback">
+          Weekly windows <span class="muted">(if the form controls fail to load, use weekday,start,end per line)</span><textarea name="schedule" id="schedule-source" rows="5">{{ form_values.schedule }}</textarea>
+        </label>
+        <noscript>
+          <p class="notice">JavaScript is needed for the add/remove controls. You can enter windows using the fallback field above.</p>
+        </noscript>
+      </section>
+      {% set selected_hobbies = form_values.hobbies.lower().split(',') | map('trim') | list %}
+      <fieldset
+        class="activity-picker"
+        aria-describedby="activity-help activity-count"
+      >
+        <legend>Hobbies and activities</legend>
+        <p class="muted" id="activity-help">Choose up to 4 activities you enjoy.</p>
+        <div class="activity-choices">
+          {% for activity in activity_choices %}
+            <label class="activity-choice">
+            <input
+              type="checkbox"
+              name="hobbies"
+              value="{{ activity }}"
+              {% if activity in selected_hobbies %}checked{% endif %}
+            ><span>{{ activity | title }}</span></label>
+          {% endfor %}
+        </div>
+        <p class="muted" id="activity-count" role="status" aria-live="polite"></p>
+      </fieldset>
+      <section
+        class="location-picker"
+        aria-labelledby="location-heading"
+        data-search-url="/groups/{{ group.id }}/location-search"
+      >
+        <h2 id="location-heading">Your starting area</h2>
+        <p class="muted" id="location-help">Search for your town, city, or ZIP/postal code, then choose a match. A nearby town is enough; please don't enter a street address.</p>
+        <label>
+          Town or postal code
+          <input
+            id="location-query"
+            name="broad_location"
+            value="{{ form_values.broad_location }}"
+            placeholder="e.g. Brooklyn or 11201"
+            maxlength="160"
+            aria-describedby="location-help location-status"
+            autocomplete="off"
+          >
+        </label>
+        <div class="location-actions">
+          <button type="button" id="search-location">Search locations</button>
+          <button
+            type="button"
+            class="secondary"
+            id="approximate-location"
+          >Use my current location</button>
+          <button type="button" class="secondary" id="clear-location">Clear location</button>
+        </div>
+        <p class="muted" id="location-status" role="status" aria-live="polite">
+          {% if form_values.latitude %}
+            Starting area added. Save your profile to keep any changes.
+          {% else %}
+            No starting area chosen yet. Location is optional.
+          {% endif %}
+        </p>
+        <ul
+          id="location-results"
+          class="plain-list location-results"
+          aria-label="Location matches"
+          hidden
+        >
+        </ul>
+        <p class="muted">Live town search data: <a href="https://open-meteo.com/">Open-Meteo</a> / <a href="https://www.geonames.org/">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
+        <p class="muted">Search sends only your search text to Open-Meteo; demo mode uses sample locations offline. Current location requires browser permission and is rounded before saving. Your starting coordinates are not shown to other members.</p>
+        <input
+          type="hidden"
+          name="location_label"
+          id="location-label"
+          value="{{ form_values.location_label }}"
+        >
+        <input
+          type="hidden"
+          name="latitude"
+          id="location-latitude"
+          value="{{ form_values.latitude }}"
+        >
+        <input
+          type="hidden"
+          name="longitude"
+          id="location-longitude"
+          value="{{ form_values.longitude }}"
+        >
+        <noscript>
+          <p class="notice">Location search needs JavaScript. Enable it to choose a starting area, or leave location blank.</p>
+        </noscript>
+      </section>
+      <details>
+        <summary>Optional private address</summary>
+        <p class="muted">Not needed for venue suggestions. This address is encrypted and is not sent to location search services.</p>
+        <label>
+          Exact starting address
+          <input
+            name="exact_address"
+            value="{{ form_values.exact_address }}"
+            autocomplete="street-address"
+          >
+        </label>
+      </details>
+      <label>
+        Preferred travel radius (miles)
+        <input
+          name="travel_radius_miles"
+          type="number"
+          min="0.1"
+          max="125"
+          step="any"
+          required
+          value="{{ form_values.travel_radius_miles }}"
+        >
+      </label>
+      <p class="muted">We prefer venues within everyone's radius, then the shortest longest journey. Alternatives outside a preferred radius are labeled. Distances are straight-line estimates, not travel times.</p>
+      <label class="check">
+      <input
+        name="allow_places_discovery"
+        type="checkbox"
+        {% if form_values.allow_places_discovery %}checked{% endif %}
+      > Allow my approximate location to help find venues through Google Places</label>
+      <p class="muted">When Google discovery is enabled, rounded search areas based on opted-in members are sent to Google. Names, addresses, and individual profiles are not sent. Turning this off still allows private distance ranking against the venue catalog. Hiding your broad location below only affects what other members see.</p>
+      <label class="check">
+      <input
+        name="hide_hobbies"
+        type="checkbox"
+        {% if form_values.hide_hobbies %}checked{% endif %}
+      > Hide my hobbies from this group</label>
+      <label class="check">
+      <input
+        name="hide_availability"
+        type="checkbox"
+        {% if form_values.hide_availability %}checked{% endif %}
+      > Hide my availability from this group</label>
+      <label class="check">
+      <input
+        name="hide_location"
+        type="checkbox"
+        {% if form_values.hide_location %}checked{% endif %}
+      > Hide my broad location from this group</label>
+      <button>Save group profile</button>
+    </form>
+  </section>
+{% endblock %}
+{% block scripts %}
+  <script src="/static/weekly-availability.js" defer></script>
+  <script src="/static/activity-picker.js" defer></script>
+  <script src="/static/location.js" defer></script>
+{% endblock %}

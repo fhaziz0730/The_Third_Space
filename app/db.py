@@ -1,12 +1,13 @@
 import os
-from pathlib import Path
 
+from fastapi import Request
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
+from .config import PROJECT_ROOT, is_mock_mode
 
-USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() == "true"
-MOCK_DATABASE_PATH = Path(__file__).resolve().parent.parent / ".mock" / "third_space.db"
+USE_MOCK_DATA = is_mock_mode()
+MOCK_DATABASE_PATH = PROJECT_ROOT / ".mock" / "third_space.db"
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+psycopg://third_space:third_space@localhost:5432/third_space",
@@ -16,21 +17,18 @@ if USE_MOCK_DATA:
     DATABASE_URL = f"sqlite:///{MOCK_DATABASE_PATH.as_posix()}"
 elif DATABASE_URL.startswith(("postgres://", "postgresql://")):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL.split("://", 1)[1]
-engine = create_engine(
-    DATABASE_URL, pool_pre_ping=True,
-    **({"connect_args": {"check_same_thread": False}} if USE_MOCK_DATA else
-       {"connect_args": {"connect_timeout": 5}} if DATABASE_URL.startswith("postgresql+") else {}),
-)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+connect_args = {}
+if DATABASE_URL.startswith("sqlite:"):
+    connect_args["check_same_thread"] = False
+elif DATABASE_URL.startswith("postgresql+"):
+    connect_args["connect_timeout"] = 5
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 
 
 class Base(DeclarativeBase):
     pass
 
 
-def get_db():
-    db = SessionLocal()
-    try:
+def get_db(request: Request):
+    with request.app.state.sessions() as db:
         yield db
-    finally:
-        db.close()

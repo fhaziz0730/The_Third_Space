@@ -1,15 +1,15 @@
 """Town/postal-code search; exact addresses are never read by this module."""
 
-from functools import lru_cache
 import json
-from math import isfinite
 import os
+from functools import lru_cache
+from math import isfinite
 from time import monotonic
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from .db import USE_MOCK_DATA
+from .config import is_mock_mode
 
 SAMPLE_LOCATIONS = (
     ("Brooklyn, New York, United States", 40.6782, -73.9442, "11201"),
@@ -27,7 +27,7 @@ class LocationSearchUnavailable(Exception):
 
 
 def uses_sample_locations():
-    return USE_MOCK_DATA or os.getenv("LOCATION_SEARCH_PROVIDER", "open-meteo") == "local"
+    return is_mock_mode() or os.getenv("LOCATION_SEARCH_PROVIDER", "open-meteo") == "local"
 
 
 @lru_cache(maxsize=256)
@@ -57,9 +57,16 @@ def _search_remote(query, time_bucket, customer_key):
                 continue
             if not -90 <= lat <= 90 or not -180 <= lon <= 180:
                 continue
-            label = ", ".join(dict.fromkeys(str(value) for value in
-                              (name, result.get("admin1"), result.get("country")) if value))[:160]
-            locations.append({"label": label, "latitude": round(lat, 4), "longitude": round(lon, 4)})
+            label = ", ".join(
+                dict.fromkeys(
+                    str(value)
+                    for value in (name, result.get("admin1"), result.get("country"))
+                    if value
+                )
+            )[:160]
+            locations.append(
+                {"label": label, "latitude": round(lat, 4), "longitude": round(lon, 4)}
+            )
         except (KeyError, ValueError, TypeError):
             continue
     return tuple(locations)
@@ -70,8 +77,11 @@ def search_locations(query):
     if not 2 <= len(query) <= 100:
         raise ValueError("Enter a town, city, or postal code between 2 and 100 characters.")
     if uses_sample_locations():
-        return [{"label": label, "latitude": lat, "longitude": lon}
-                for label, lat, lon, postal in SAMPLE_LOCATIONS
-                if query.casefold() in label.casefold() or query == postal][:6]
-    return list(_search_remote(query, int(monotonic() // 600),
-                               os.getenv("OPEN_METEO_API_KEY", "").strip()))
+        return [
+            {"label": label, "latitude": lat, "longitude": lon}
+            for label, lat, lon, postal in SAMPLE_LOCATIONS
+            if query.casefold() in label.casefold() or query == postal
+        ][:6]
+    return list(
+        _search_remote(query, int(monotonic() // 600), os.getenv("OPEN_METEO_API_KEY", "").strip())
+    )

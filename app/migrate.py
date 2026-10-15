@@ -1,15 +1,14 @@
 """Run versioned database upgrades before deploying the web process."""
 
-from pathlib import Path
-
 from alembic import command
 from alembic.config import Config
 
+from .config import PROJECT_ROOT
+
 
 def migration_config():
-    root = Path(__file__).resolve().parent.parent
-    config = Config(str(root / "alembic.ini"))
-    config.set_main_option("script_location", str(root / "migrations"))
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
     return config
 
 

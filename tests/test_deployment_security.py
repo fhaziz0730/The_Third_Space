@@ -1,19 +1,19 @@
-from datetime import datetime, timedelta, timezone
 import os
 import re
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from app.config import Settings
-from app.db import Base, get_db
+from app.db import Base
 from app.main import create_app
 from app.migrate import upgrade_database
 from app.models import AuthRateLimit, User
@@ -22,17 +22,21 @@ from app.rate_limits import check_auth_limit
 
 class SecurityHTTPTests(unittest.TestCase):
     def setUp(self):
-        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        self.engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
         with self.engine.begin() as connection:
             upgrade_database(connection)
-        self.app = create_app(Settings(False, "test-secret-with-enough-random-characters", False, "http://testserver", ("testserver",)))
-
-        def database():
-            with Session(self.engine) as db:
-                yield db
-
-        self.app.dependency_overrides[get_db] = database
-        # Avoid lifespan: this suite uses an isolated migrated database above.
+        self.app = create_app(
+            Settings(
+                False,
+                "test-secret-with-enough-random-characters",
+                False,
+                "http://testserver",
+                ("testserver",),
+            ),
+            database_engine=self.engine,
+        )
         self.client = TestClient(self.app)
 
     def tearDown(self):
@@ -46,43 +50,80 @@ class SecurityHTTPTests(unittest.TestCase):
 
     def test_missing_invalid_and_cross_origin_tokens_rejected_before_mutation(self):
         token = self.token()
-        fields = {"email": "person@example.com", "display_name": "Person", "password": "test-password"}
+        fields = {
+            "email": "person@example.com",
+            "display_name": "Person",
+            "password": "test-password",
+        }
         self.assertEqual(self.client.post("/register", data=fields).status_code, 403)
-        self.assertEqual(self.client.post("/register", data={**fields, "csrf_token": "invalid"}).status_code, 403)
-        self.assertEqual(self.client.post("/register", data={**fields, "csrf_token": token},
-                                          headers={"Origin": "https://attacker.example"}).status_code, 403)
-        self.assertEqual(self.client.post("/register", data={**fields, "csrf_token": token},
-                                          headers={"Origin": "null"}).status_code, 403)
-        self.assertEqual(self.client.post("/register", data={**fields, "csrf_token": token},
-                                          headers={"Sec-Fetch-Site": "cross-site"}).status_code, 403)
+        self.assertEqual(
+            self.client.post("/register", data={**fields, "csrf_token": "invalid"}).status_code, 403
+        )
+        self.assertEqual(
+            self.client.post(
+                "/register",
+                data={**fields, "csrf_token": token},
+                headers={"Origin": "https://attacker.example"},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/register", data={**fields, "csrf_token": token}, headers={"Origin": "null"}
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/register",
+                data={**fields, "csrf_token": token},
+                headers={"Sec-Fetch-Site": "cross-site"},
+            ).status_code,
+            403,
+        )
         with Session(self.engine) as db:
             self.assertEqual(db.query(User).count(), 0)
 
     def test_form_body_is_replayed_and_csrf_rotates_after_sign_in(self):
         token = self.token()
-        response = self.client.post("/register", data={"email": "person@example.com", "display_name": "Person",
-                                                       "password": "test-password", "csrf_token": token},
-                                    headers={"Origin": "http://testserver"}, follow_redirects=False)
+        response = self.client.post(
+            "/register",
+            data={
+                "email": "person@example.com",
+                "display_name": "Person",
+                "password": "test-password",
+                "csrf_token": token,
+            },
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.client.post("/logout", data={"csrf_token": token}).status_code, 403)
         new_token = self.token("/")
         self.assertNotEqual(new_token, token)
-        self.assertEqual(self.client.post("/logout", data={"csrf_token": new_token}).status_code, 200)
+        self.assertEqual(
+            self.client.post("/logout", data={"csrf_token": new_token}).status_code, 200
+        )
 
     def test_ajax_header_and_origin_validation(self):
         token = self.token()
         # A valid token passes middleware and reaches membership authorization.
-        response = self.client.post("/groups/1/location-search", data={"q": "Boston"},
-                                    headers={"X-CSRF-Token": token})
+        response = self.client.post(
+            "/groups/1/location-search", data={"q": "Boston"}, headers={"X-CSRF-Token": token}
+        )
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(self.client.post("/groups/1/location-search", data={"q": "Boston"}).status_code, 403)
+        self.assertEqual(
+            self.client.post("/groups/1/location-search", data={"q": "Boston"}).status_code, 403
+        )
 
     def test_security_headers_hosts_and_readiness(self):
         response = self.client.get("/login")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("form-action 'self'", response.headers["Content-Security-Policy"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
-        self.assertEqual(self.client.get("/", headers={"Host": "attacker.example"}).status_code, 400)
+        self.assertEqual(
+            self.client.get("/", headers={"Host": "attacker.example"}).status_code, 400
+        )
         self.assertEqual(self.client.get("/health/live").status_code, 200)
         self.assertEqual(self.client.get("/health/ready").status_code, 200)
         with self.engine.begin() as connection:
@@ -91,26 +132,105 @@ class SecurityHTTPTests(unittest.TestCase):
 
     def test_form_request_size_limit(self):
         self.token()
-        response = self.client.post("/register", content=b"x=" + b"a" * (256 * 1024),
-                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        response = self.client.post(
+            "/register",
+            content=b"x=" + b"a" * (256 * 1024),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
         self.assertEqual(response.status_code, 413)
+
+    def test_ajax_requests_obey_the_same_body_limit_as_forms(self):
+        token = self.token()
+        response = self.client.post(
+            "/groups/1/location-search",
+            content=b"q=" + b"a" * (256 * 1024),
+            headers={"X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(response.status_code, 413)
+
+    def test_profile_form_is_parsed_and_saved_over_http(self):
+        token = self.token()
+        self.client.post(
+            "/register",
+            data={
+                "email": "profile@example.com",
+                "display_name": "Profile",
+                "password": "test-password",
+                "csrf_token": token,
+            },
+        )
+        token = self.token("/groups/new")
+        response = self.client.post(
+            "/groups", data={"name": "HTTP group", "csrf_token": token}, follow_redirects=False
+        )
+        self.assertEqual(response.status_code, 303)
+        group_url = response.headers["location"]
+        token = self.token(group_url + "/availability")
+        data = {
+            "csrf_token": token,
+            "timezone_name": "UTC",
+            "schedule": "0,09:00,11:00",
+            "hobbies": ["coffee", "walking"],
+            "broad_location": "Boston",
+            "location_label": "Boston",
+            "latitude": "42.36",
+            "longitude": "-71.06",
+            "travel_radius_miles": "10",
+            "hide_location": "on",
+        }
+        response = self.client.post(group_url + "/availability", data=data, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        from app.models import Membership
+
+        with Session(self.engine) as db:
+            member = db.query(Membership).one()
+            self.assertEqual(member.hobbies, "coffee,walking")
+            self.assertTrue(member.hide_location)
+            self.assertEqual(member.travel_radius_km, 16.09344)
+        response = self.client.post(
+            group_url + "/availability",
+            data={**data, "latitude": "nan", "schedule": "1,12:00,13:00"},
+        )
+        self.assertEqual(response.status_code, 200)
+        with Session(self.engine) as db:
+            member = db.query(Membership).one()
+            self.assertEqual(member.latitude, 42.36)
+            self.assertEqual(member.windows[0].weekday, 0)
+
+    def test_lifespan_uses_the_app_database(self):
+        with TestClient(self.app) as client:
+            self.assertEqual(client.get("/health/ready").status_code, 200)
 
 
 class ProductionConfigTests(unittest.TestCase):
     def environment(self):
-        return {"APP_ENV": "production", "SESSION_SECRET": "a-long-random-test-secret-of-40-characters",
-                "COOKIE_SECURE": "true", "APP_ORIGIN": "https://example.com", "ALLOWED_HOSTS": "example.com,healthcheck.railway.app",
-                "USE_MOCK_DATA": "false", "DATABASE_URL": "postgresql+psycopg://user:password@host/db?sslmode=require",
-                "ADDRESS_ENCRYPTION_KEY": Fernet.generate_key().decode()}
+        return {
+            "APP_ENV": "production",
+            "SESSION_SECRET": "a-long-random-test-secret-of-40-characters",
+            "COOKIE_SECURE": "true",
+            "APP_ORIGIN": "https://example.com",
+            "ALLOWED_HOSTS": "example.com,healthcheck.railway.app",
+            "USE_MOCK_DATA": "false",
+            "DATABASE_URL": "postgresql+psycopg://user:password@host/db?sslmode=require",
+            "ADDRESS_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+        }
 
     def test_valid_and_unsafe_configuration(self):
         with patch.dict(os.environ, self.environment(), clear=True):
             self.assertTrue(Settings.from_env().production)
-        for name, value in (("SESSION_SECRET", "development-only-change-me"), ("COOKIE_SECURE", "false"),
-                            ("APP_ORIGIN", "http://example.com"), ("ALLOWED_HOSTS", "*"),
-                            ("USE_MOCK_DATA", "true"), ("ADDRESS_ENCRYPTION_KEY", "invalid"),
-                            ("DATABASE_URL", "sqlite:///app.db")):
-            with self.subTest(name=name), patch.dict(os.environ, {**self.environment(), name: value}, clear=True):
+        for name, value in (
+            ("SESSION_SECRET", "development-only-change-me"),
+            ("COOKIE_SECURE", "false"),
+            ("APP_ORIGIN", "http://example.com"),
+            ("ALLOWED_HOSTS", "*"),
+            ("USE_MOCK_DATA", "true"),
+            ("ADDRESS_ENCRYPTION_KEY", "invalid"),
+            ("DATABASE_URL", "sqlite:///app.db"),
+        ):
+            with (
+                self.subTest(name=name),
+                patch.dict(os.environ, {**self.environment(), name: value}, clear=True),
+            ):
                 with self.assertRaises(ValueError):
                     Settings.from_env()
 
@@ -139,7 +259,9 @@ class RateLimitTests(unittest.TestCase):
 
     def test_registration_ip_limit_and_expiry(self):
         for index in range(5):
-            check_auth_limit(self.db, self.request("192.0.2.1"), f"person{index}@example.com", "register")
+            check_auth_limit(
+                self.db, self.request("192.0.2.1"), f"person{index}@example.com", "register"
+            )
         with self.assertRaises(HTTPException):
             check_auth_limit(self.db, self.request("192.0.2.1"), "new@example.com", "register")
         for row in self.db.scalars(select(AuthRateLimit)):

@@ -42,6 +42,9 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -r requirements-dev.txt
+      - run: ruff check app tests scripts
+      - run: ruff format --check app tests scripts
+      - run: djlint app/templates --check
       - run: python -m unittest discover -s tests
       - run: node tests/location_picker.test.cjs
       - run: python -m app.migrate
