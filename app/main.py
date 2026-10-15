@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from .db import Base, engine
+from .db import Base, SessionLocal, USE_MOCK_DATA, engine
 from .routes import auth, groups, places, polls
 
 app = FastAPI(title="The Third Space")
@@ -25,3 +25,8 @@ app.include_router(places.router)
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    if USE_MOCK_DATA:
+        from .mock_data import seed_mock_data
+
+        with SessionLocal() as db:
+            seed_mock_data(db)
