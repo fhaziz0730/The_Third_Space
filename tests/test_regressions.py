@@ -35,7 +35,7 @@ class RegressionTests(unittest.TestCase):
     def request(self, user=None, session=None):
         if session is None:
             session = {"user_id": user.id} if user else {}
-        return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "session": session})
+        return Request({"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": [], "session": session})
 
     def make_poll(self, counts=(2, 2, 0), closed=True, expired=False):
         now = datetime.now(timezone.utc)

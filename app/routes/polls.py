@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Poll, PollOption, RSVP, User, Vote
+from ..place_discovery import get_place, maps_link
+from ..venues import venue_summary
 from ..web import can_manage, current_user, membership_for, page
 
 router = APIRouter()
@@ -29,17 +31,29 @@ def poll_page(request: Request, group_id: int, poll_id: int, db: Session = Depen
         poll.closed_at = poll.closes_at
         db.commit()
     options = []
+    external_places = {}
     for option in poll.options:
         votes = db.query(Vote).filter_by(option_id=option.id).all()
         vote = next((item for item in votes if item.user_id == user.id), None)
         rsvp = db.query(RSVP).filter_by(option_id=option.id, user_id=user.id).first()
         attendees = db.query(RSVP, User).join(User, User.id == RSVP.user_id).filter(RSVP.option_id == option.id).all()
-        options.append({"option": option, "votes": votes, "my_vote": vote, "rsvp": rsvp, "rsvps": attendees, "place": option.place})
+        venue = option.place
+        if option.google_place_id:
+            if option.google_place_id not in external_places:
+                external_places[option.google_place_id] = get_place(option.google_place_id)
+            venue = external_places[option.google_place_id]
+        available_ids = set(option.available_user_ids.split(","))
+        available = [m for m in member.group.memberships if str(m.user_id) in available_ids]
+        summary = venue_summary(venue, available, member) if venue else None
+        options.append({"option": option, "votes": votes, "my_vote": vote, "rsvp": rsvp, "rsvps": attendees, "place": venue,
+                        "venue_summary": summary, "maps_url": maps_link(option.google_place_id) if option.google_place_id else None})
     highest = max((len(row["votes"]) for row in options), default=0)
     winning_option_ids = [row["option"].id for row in options if len(row["votes"]) == highest]
     tied = len(winning_option_ids) > 1
     can_confirm_tie = poll.created_by == user.id
-    return page(request, "poll.html", user=user, group=member.group, poll=poll, options=options, closed=closed, can_manage=can_manage(member), tied=tied, can_confirm_tie=can_confirm_tie, winning_option_ids=winning_option_ids)
+    response = page(request, "poll.html", user=user, group=member.group, poll=poll, options=options, closed=closed, can_manage=can_manage(member), tied=tied, can_confirm_tie=can_confirm_tie, winning_option_ids=winning_option_ids)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/poll-options/{option_id}/vote")

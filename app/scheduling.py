@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from .models import AvailabilityWindow, Group, Membership, Place
+from .place_discovery import DiscoverySession
+from .venues import rank_venues, venue_score
 
 
 ACTIVITIES = {
@@ -29,7 +31,9 @@ def _utc_window_for_date(member: Membership, window: AvailabilityWindow, local_d
     return start, end
 
 
-def generate_candidates(db: Session, group: Group, horizon_days: int = 30, limit: int = 5):
+def generate_candidates(db: Session, group: Group, horizon_days: int = 30, limit: int = 5, notices=None):
+    if limit <= 0:
+        return []
     members = list(group.memberships)
     if not members:
         return []
@@ -73,13 +77,11 @@ def generate_candidates(db: Session, group: Group, horizon_days: int = 30, limit
                             available.append(other)
                     if len(available) < max(1, (len(members) // 2) + 1):
                         continue
-                    place = rank_places(db, members, activity)[0] if rank_places(db, members, activity) else None
                     candidates.append({
                         "activity": activity,
                         "duration_minutes": duration_minutes,
                         "starts_at": start,
                         "available": available,
-                        "place": place,
                     })
                     if len(candidates) >= limit * 5:
                         break
@@ -94,21 +96,33 @@ def generate_candidates(db: Session, group: Group, horizon_days: int = 30, limit
     for candidate in candidates:
         key = (candidate["activity"], candidate["starts_at"])
         unique.setdefault(key, candidate)
-    return sorted(unique.values(), key=lambda item: (-len(item["available"]), item["starts_at"]))[:limit]
+    slots = sorted(unique.values(), key=lambda item: (-len(item["available"]), item["starts_at"]))[:limit]
+    discovery = DiscoverySession()
+    ranked_cache = {}
+    alternatives = []
+    for slot in slots:
+        tag = next(tag for tag, (label, _) in ACTIVITIES.items() if label == slot["activity"])
+        key = (tag, tuple(sorted(m.user_id for m in slot["available"])))
+        if key not in ranked_cache:
+            local = db.query(Place).filter(Place.activity_tag == tag).all()
+            external = discovery.search(slot["available"], tag)
+            ranked = rank_venues(local + external, slot["available"])
+            within_radius = [place for place in ranked if not venue_score(place, slot["available"])[0]]
+            ranked_cache[key] = (within_radius or ranked)[:3]
+        alternatives.append([{**slot, "place": place} for place in ranked_cache[key]]
+                            or [{**slot, "place": None}])
+    # Keep time/activity variety before filling spare poll slots with venue choices.
+    primary_count = max(1, limit - 2)
+    options = [rows[0] for rows in alternatives[:primary_count]]
+    extras = [row for rows in alternatives[:primary_count] for row in rows[1:]]
+    options.extend(extras[:max(0, limit - len(options))])
+    options.extend(rows[0] for rows in alternatives[primary_count:limit])
+    if discovery.unavailable and notices is not None:
+        notices.append("places-unavailable")
+    return options[:limit]
 
 
 def rank_places(db: Session, members: list[Membership], activity: str):
     tag = next((tag for tag, (label, _) in ACTIVITIES.items() if label == activity), activity.lower())
     places = db.query(Place).filter(Place.activity_tag == tag).all()
-    located = [member for member in members if member.latitude is not None and member.longitude is not None]
-    if not located:
-        return []
-    def distance_km(lat1, lon1, lat2, lon2):
-        from math import asin, cos, radians, sin, sqrt
-        dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
-        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-        return 6371 * 2 * asin(sqrt(a))
-    return sorted(places, key=lambda place: (
-        max(distance_km(m.latitude, m.longitude, place.latitude, place.longitude) for m in located)
-        - min(distance_km(m.latitude, m.longitude, place.latitude, place.longitude) for m in located)
-    ))
+    return rank_venues(places, members)

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Privacy · The Third Space{% endblock %}
+{% block content %}
+<section class="narrow">
+  <h1>Privacy</h1>
+  <p>This development prototype stores your account, group profiles, availability, venue preferences, votes, and RSVPs in its configured database. Exact addresses are encrypted and are not used for venue searches or geocoding.</p>
+  <p>Starting coordinates are used privately on the server to rank venues. Other group members can see their own estimated distance and whether a venue fits the available members' preferred radii, but not your starting coordinates. Your broad location is visible to your group unless you hide it.</p>
+  <p>When you press Search locations, the town, city, or postal code you entered is sent to Open-Meteo to find matching areas. Please do not enter a street address in this search. Selected area names and coordinates are stored with your group profile when you save it. Public locality search results may be cached in server memory for up to ten minutes. See <a href="https://open-meteo.com/en/terms">Open-Meteo's terms and privacy information</a>. Demo mode uses offline sample areas. Use my current location asks your browser for permission and rounds coordinates before adding them to your profile; it does not call the town search service.</p>
+  <p>Google venue discovery is optional. If enabled by the operator and you opt in through your group profile, the app sends approximate search areas, rounded to two decimal places, derived from opted-in members' coordinates, plus venue categories and search radii, to Google Places. Your name, email, exact address, and profile are not included. You can turn off this permission in your group profile.</p>
+  <p>Viewing a poll with a Google venue retrieves its details from Google using the venue's place ID. Following Google Maps links opens Google's service. Google's handling of data is described in the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>, incorporated here for these features.</p>
+  <p>Google venue names, addresses, and coordinates are retrieved for the current request. The app stores only their place IDs with poll options. The local catalog contains manually entered or fictional data. Mock mode disables Google API calls.</p>
+  <p>The app uses a session cookie to keep you signed in. Before public deployment, the operator must provide contact details, retention periods, and account deletion procedures appropriate to their deployment.</p>
+</section>
+{% endblock %}

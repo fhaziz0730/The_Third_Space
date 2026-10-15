@@ -84,3 +84,8 @@ code { background: #edf0ed; padding: 2px 5px; border-radius: 4px; }
   .remove-window { justify-self: end; }
 }
 @media (max-width: 640px) { main { margin-top: 24px; } .heading-row, .option { align-items: flex-start; flex-direction: column; } .heading-row { gap: 12px; } .option .actions { width: 100%; } .topbar { padding: 0 20px; } .availability-list { padding: 16px; } }
+.google-place { border: 1px solid #ccc; border-radius: 8px; padding: 10px; margin: 10px 0; }
+.google-attribution { font-family: sans-serif; font-size: 12px; font-weight: 400; font-style: normal; color: #5e5e5e; white-space: nowrap; letter-spacing: normal; }
+.location-picker { border: 1px solid #d8e2d8; border-radius: 12px; padding: 20px; }
+.location-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.location-match { width: 100%; text-align: left; }

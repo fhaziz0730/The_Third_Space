@@ -1,16 +1,34 @@
 from datetime import datetime, timedelta, timezone
 import secrets
+from math import isfinite
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import AvailabilityWindow, Group, Membership, Poll, PollOption, User
 from ..scheduling import ACTIVITIES, generate_candidates
 from ..web import can_manage, current_user, membership_for, page
+from ..location_search import LocationSearchUnavailable, search_locations, uses_sample_locations
 
 router = APIRouter()
+
+
+@router.post("/groups/{group_id}/location-search")
+def location_search(request: Request, group_id: int, q: Annotated[str, Form()], db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or not membership_for(db, user, group_id):
+        raise HTTPException(404)
+    try:
+        results = search_locations(q)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except LocationSearchUnavailable:
+        return JSONResponse({"error": "Location search is unavailable. Try again or use your current location."}, status_code=503)
+    return JSONResponse({"results": results, "sample": uses_sample_locations()},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/groups/new", response_class=HTMLResponse)
@@ -116,7 +134,7 @@ def availability_page(request: Request, group_id: int, db: Session = Depends(get
 
 
 @router.post("/groups/{group_id}/availability")
-def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db)):
+def save_availability(request: Request, group_id: int, timezone_name: str = Form("UTC"), schedule: str = Form(""), hobbies: list[str] = Form([]), broad_location: str = Form(""), exact_address: str = Form(""), latitude: str = Form(""), longitude: str = Form(""), hide_hobbies: str | None = Form(None), hide_availability: str | None = Form(None), hide_location: str | None = Form(None), db: Session = Depends(get_db), travel_radius_km: Annotated[str, Form()] = "25", allow_places_discovery: Annotated[str | None, Form()] = None, location_label: Annotated[str | None, Form()] = None, location_picker: Annotated[bool, Form()] = False):
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     user = current_user(request, db)
     member = membership_for(db, user, group_id) if user else None
@@ -133,8 +151,19 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
         "hide_hobbies": bool(hide_hobbies),
         "hide_availability": bool(hide_availability),
         "hide_location": bool(hide_location),
+        "travel_radius_km": travel_radius_km,
+        "allow_places_discovery": bool(allow_places_discovery),
+        "location_label": (location_label or "") if location_picker else (location_label if location_label is not None else broad_location),
     }
     selected_hobbies = list(dict.fromkeys(hobbies))
+    if (location_picker or location_label is not None) and broad_location.strip() and (broad_location != location_label or not latitude.strip() or not longitude.strip()):
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Search and choose a matching location, or use your current location, before saving.")
+    try:
+        radius = float(travel_radius_km)
+        if not isfinite(radius) or not 1 <= radius <= 200:
+            raise ValueError
+    except ValueError:
+        return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose a travel radius between 1 and 200 km.")
     if len(selected_hobbies) > 4 or any(hobby not in ACTIVITIES for hobby in selected_hobbies):
         return page(request, "availability.html", activity_choices=ACTIVITIES, user=user, member=member, group=member.group, windows=member.windows, form_values=form_values, error="Choose up to four hobbies from the available activities.")
     try:
@@ -180,6 +209,8 @@ def save_availability(request: Request, group_id: int, timezone_name: str = Form
     member.hide_hobbies = bool(hide_hobbies)
     member.hide_availability = bool(hide_availability)
     member.hide_location = bool(hide_location)
+    member.travel_radius_km = radius
+    member.allow_places_discovery = bool(allow_places_discovery)
     db.commit()
     return RedirectResponse(f"/groups/{group_id}", status_code=303)
 
@@ -235,13 +266,16 @@ def create_suggestions(request: Request, group_id: int, db: Session = Depends(ge
     if not member or not can_manage(member):
         raise HTTPException(403)
     group = member.group
-    options = generate_candidates(db, group)
+    notices = []
+    options = generate_candidates(db, group, notices=notices)
     if not options:
         return RedirectResponse(f"/groups/{group_id}?message=no-suggestions", status_code=303)
     poll = Poll(group_id=group_id, created_by=user.id, closes_at=datetime.now(timezone.utc) + timedelta(hours=2))
     db.add(poll)
     db.flush()
     for option in options:
-        poll.options.append(PollOption(activity=option["activity"], duration_minutes=option["duration_minutes"], starts_at=option["starts_at"], place_id=option["place"].id if option["place"] else None, available_user_ids=",".join(str(person.user_id) for person in option["available"])))
+        venue = option["place"]
+        poll.options.append(PollOption(activity=option["activity"], duration_minutes=option["duration_minutes"], starts_at=option["starts_at"], place_id=venue.id if venue else None, google_place_id=getattr(venue, "google_place_id", None), available_user_ids=",".join(str(person.user_id) for person in option["available"])))
     db.commit()
-    return RedirectResponse(f"/groups/{group_id}/polls/{poll.id}", status_code=303)
+    suffix = "?message=places-unavailable" if notices else ""
+    return RedirectResponse(f"/groups/{group_id}/polls/{poll.id}{suffix}", status_code=303)
